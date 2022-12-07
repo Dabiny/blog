@@ -110,29 +110,91 @@
 // }
 
 // MongoDB를 활용한 RESTAPI
+import mongoose from 'mongoose';
+import Joi from 'joi';
 import Post from '../../models/post';
 
+const { ObjectId } = mongoose.Types;
+
+export const checkObjectId = (ctx, next) => {
+  const { id } = ctx.params;
+  if (!ObjectId.isValid(id)) {
+    ctx.status = 400; // bad Request
+    return;
+  }
+  return next();
+};
+
 // 블로그 포스트 작성
+// export const write = async (ctx) => {
+//   const { title, body, tags } = ctx.request.body;
+//   const post = new Post({
+//     title,
+//     body,
+//     tags,
+//   });
+
+//   try {
+//     await post.save();
+//     ctx.body = post;
+//   } catch (e) {
+//     ctx.throw(500, e);
+//   }
+// };
+
+// ⭐️joi 라이브러리 사용예시
 export const write = async (ctx) => {
+  const schema = Joi.object().keys({
+    // 객체가 다음 필드를 가지고 있음을 검증한다.
+    title: Joi.string().required(), // required()가있으면 필수 항목이다.
+    body: Joi.string().required(),
+    tags: Joi.array().items(Joi.string()).required(), // 문자열로 이루어진 배열
+  });
+
+  const request = schema.validate(ctx.request.body); // 검사하기
+  if (request.error) {
+    ctx.status = 400; // bad request
+    ctx.body = request.error;
+    return;
+  }
+
   const { title, body, tags } = ctx.request.body;
   const post = new Post({
     title,
     body,
-    tags,
+    tags
   });
-
+  
   try {
     await post.save();
     ctx.body = post;
-  } catch (e) {
+  }
+  catch(e) {
     ctx.throw(500, e);
   }
+
 };
+
 // 데이터 조회 (블로그글 조회)
 export const list = async (ctx) => {
+  // 쿼리는 문자열이기때문에 숫자로 변환해줘야한다. 
+  const page = parseInt(ctx.query.page || '1', 10);
+  if (page < 1) {
+    ctx.status = 400;
+    return;
+  }
+  
   try {
-    const posts = await Post.find().exec();
-    ctx.body = posts;
+    // const posts = await Post.find().exec(); // 데이터 조회시 모델 인스턴스의 find함수 적용, exec()는 서버에 쿼리를 요청.
+    const posts = await Post.find().sort({ _id: -1 }).limit(10).skip((page - 1) * 10).exec(); // 정렬 , 보이는 개수 제한 사용, skip 다음페이지넘어가기
+    const postCount = await Post.countDocuments().exec();
+    ctx.set('Last-page', Math.ceil(postCount / 10));
+    // 200자 이상일때 ...을 붙이고 문자열을 자르는 기능
+    ctx.body = posts.map(post => post.toJSON()).map(post => ({
+      ...post,
+      body:
+        post.body.length < 200 ? post.body : `${post.body.slice(0, 200)}...`,
+    }));
   } catch (e) {
     ctx.throw(500, e);
   }
@@ -141,7 +203,7 @@ export const list = async (ctx) => {
 export const read = async (ctx) => {
   const { id } = ctx.params;
   try {
-    const post = await Post.findById(id).exec();
+    const post = await Post.findById(id).exec(); // 특정데이터 조회시 findById()사용
     if (!post) {
       ctx.status = 404; // not found
       return;
@@ -154,24 +216,56 @@ export const read = async (ctx) => {
 export const remove = async (ctx) => {
   const { id } = ctx.params;
   try {
-    await Post.findByIdAndDelete(id).exec();
+    await Post.findByIdAndDelete(id).exec(); // id를 찾아서 지운다.
     ctx.status = 204; // No Content (성공하기는 했지만 응답할 데이터는 없다.)
   } catch (e) {
     ctx.throw(500, e);
   }
 };
-export const update = async (ctx) => {
+
+// export const update = async (ctx) => {
+//   const { id } = ctx.params;
+//   try {
+//     const post = await Post.findByIdAndUpdate(id, ctx.request.body, {
+//       // id, 업데이트 내용, 업데이트 옵션
+//       new: true, // 이 값을 설정하면 업데이트된 데이터를 반환한다.
+//     }).exec();
+//     if (!post) {
+//       ctx.status = 404;
+//       return;
+//     }
+//     ctx.body = post;
+//   } catch (e) {
+//     ctx.throw(500, e);
+//   }
+// };
+
+// ⭐️joi 사용 update
+export const update = async(ctx) => {
   const { id } = ctx.params;
+  // write에서 사용한 스키마와 비슷하지만 required가 없다. 
+  const schema = Joi.object().keys({
+    title: Joi.string(),
+    body: Joi.string(),
+    tags: Joi.array().items(Joi.string()),
+  });
+  
+  const result = schema.validate(ctx.request.body);
+  if(result.error) {
+    ctx.status = 400; // bad request
+    ctx.body = result.error;
+    return;
+  }
+
   try {
-    const post = await Post.findByIdAndUpdate(id, ctx.request.body, {
-      new: true, // 이 값을 설정하면 업데이트된 데이터를 반환한다.
-    }).exec();
+    const post = await Post.findByIdAndUpdate(id, ctx.request.body, { new: true }).exec();
     if (!post) {
       ctx.status = 404;
       return;
     }
     ctx.body = post;
-  } catch (e) {
+  }
+  catch(e) {
     ctx.throw(500, e);
   }
 };
